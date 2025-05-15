@@ -1,0 +1,8 @@
+[package]
+name = "discord-bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serenity = { version = "0.12.4", features = ["framework", "standard_framework", "client", "gateway", "rustls_backend"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
