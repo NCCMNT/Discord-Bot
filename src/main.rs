@@ -20,8 +20,6 @@ async fn greeting(ctx: Context<'_>) -> Result<(), Error> {
 async fn teamup(
     ctx: Context<'_>,
     #[description = "Comma-separated list of voice channels for teams"] 
-    // #[channel_types("Voice")]
-    // channels: Vec<serenity::all::Channel>,
     channels: String
 
 ) -> Result<(), Error> {
@@ -70,6 +68,9 @@ async fn teamup(
     if number_of_members <= 1 {
         return Err("Need at least two members in the voice channel to perfom teamup.".into());
     }
+    if number_of_members < number_of_teams {
+        return Err("Number of members in a channel must be at least the amount of teams to perfom teamup".into());
+    }
 
     // shuffle randomly channel members
     {
@@ -93,7 +94,7 @@ async fn teamup(
     }
 
     ctx.say(format!(
-        "Split {} users into {} teams.",
+        "Splitted {} users into {} teams.",
         number_of_members,
         number_of_teams
     )).await?;
