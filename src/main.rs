@@ -1,9 +1,13 @@
+use std::mem;
+
 use anyhow::Context as _;
 use poise::serenity_prelude::{ClientBuilder, GatewayIntents};
-use serenity::all::{ChannelId, CreateEmbed, GuildId, Member};
+use serenity::{all::{ChannelId, CreateEmbed, GuildId, Member}};
 use shuttle_runtime::SecretStore;
 use shuttle_serenity::ShuttleSerenity;
-use rand::{self, seq::IndexedRandom};
+use rand::{self, seq::{IndexedRandom, SliceRandom}};
+use rand::SeedableRng;
+use rand_chacha::ChaChaRng;
 
 struct Data {}
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -13,6 +17,79 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 #[poise::command(slash_command)]
 async fn greeting(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(format!("hello {}", ctx.author().name)).await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+async fn teamup(
+    ctx: Context<'_>,
+    #[description = "Comma-separated list of voice channels for teams"] vc_teams_raw: String,
+) -> Result<(), Error> {
+    // get guild attributes
+    let guild = ctx.guild().ok_or("Command must be used in the server")?;
+    let guild_id = ctx.guild_id().ok_or("Command must be used in the server")?;
+    let author = ctx.author();
+    let voice_channel_id = ctx
+        .guild()
+        .and_then(|g| g.voice_states.get(&author.id)?.channel_id)
+        .ok_or("Command can be used only when you are on a voice channel")?;
+    
+    // parse input string into vc team list
+    let vc_teams: Vec<String> = vc_teams_raw.split(',').map(|s| s.trim().to_string()).collect();
+    
+    // get number of teams for users to be splitted to
+    let number_of_teams = vc_teams.len();
+    
+    // get voice channels by String
+    let mut voice_channels_teams = vec![];
+    for vc_team in vc_teams {
+        let voice_channel_team = guild.channels.values()
+        .find(|channel| {
+                channel.kind == serenity::model::channel::ChannelType::Voice &&
+                channel.name == vc_team
+            })
+            .ok_or_else(|| format!("Voice channel '{}' not found", vc_team))?;
+        
+        voice_channels_teams.push(voice_channel_team);
+    }
+
+    // get channel members on caller's voice channel
+    let mut channel_members = get_channel_members(guild_id, voice_channel_id, ctx).await?;
+
+    // use only real members, exclude bots
+    channel_members.retain(|member| !member.user.bot);
+
+    // get number of members
+    let number_of_members = channel_members.len();
+    if number_of_members <= 1 {
+        return Err("Need at least two members in the voice channel to perfom teamup.".into());
+    }
+
+    // shuffle randomly channel members
+    let mut rng = ChaChaRng::from_entropy();
+    channel_members.shuffle(&mut rng);
+
+    // perform teamup
+    let mut teams: Vec<Vec<Member>> = vec![vec![]; number_of_teams];
+    for (i, member) in channel_members.into_iter().enumerate() {
+        let team_index = i % number_of_teams;
+        teams[team_index].push(member);
+    }
+    
+    // distribute team members to voice channels
+    for (i, team) in teams.iter().enumerate() {
+        let team_voice_channel = voice_channels_teams[i].id;
+        for member in team {
+            member.move_to_voice_channel(ctx.serenity_context(), team_voice_channel).await?;
+        }
+    }
+
+    ctx.say(format!(
+        "Split {} users into {} teams.",
+        number_of_members,
+        number_of_teams
+    )).await?;
+
     Ok(())
 }
 
@@ -116,7 +193,8 @@ async fn main(#[shuttle_runtime::Secrets] secret_store: SecretStore) -> ShuttleS
             commands: vec![
                     list_channel_members(),
                     greeting(),
-                    winner()
+                    winner(),
+                    teamup()
                 ],
             ..Default::default()
         })
